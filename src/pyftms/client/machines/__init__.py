@@ -9,7 +9,7 @@ from .cross_trainer import CrossTrainer
 from .indoor_bike import IndoorBike
 from .rower import Rower
 from .treadmill import Treadmill
-from .treadmill_sole import TreadmillSole, is_sole_treadmill
+from .treadmill_sole import TreadmillSole, is_sole_treadmill, SoleWorkoutMode, SoleErrorCode
 
 
 def get_machine(mt: MachineType, ble_device: BLEDevice | None = None) -> type[FitnessMachine]:
@@ -46,6 +46,8 @@ __all__ = [
     "Rower",
     "Treadmill",
     "TreadmillSole",
+    "SoleWorkoutMode",
+    "SoleErrorCode",
     "get_machine",
     "is_sole_treadmill",
 ]

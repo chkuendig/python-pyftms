@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from enum import IntEnum
 from typing import ClassVar
 
 from ...models import RealtimeData, ResultCode, TreadmillData
@@ -28,6 +29,23 @@ from ..client import FitnessMachine
 from ..properties import MachineType
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class SoleWorkoutMode(IntEnum):
+    """Sole treadmill workout mode states."""
+    IDLE = 0x01      # On start screen, ready
+    START = 0x02     # Starting up
+    RUNNING = 0x04   # Workout active, belt moving
+    PAUSE = 0x06     # Paused
+    DONE = 0x07      # Workout finished
+    DEMO = 0x80      # Demo/screensaver mode
+
+
+class SoleErrorCode(IntEnum):
+    """Known Sole treadmill error codes."""
+    NONE = 0x00
+    # Add more as discovered from ErrorCode (0x10) messages
+    UNKNOWN = 0xFF
 
 
 # Known Sole treadmill name prefixes
@@ -80,6 +98,39 @@ class TreadmillSole(FitnessMachine):
         0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
         0x32, 0x40,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Sole-specific state tracking
+        self._sole_workout_mode: SoleWorkoutMode = SoleWorkoutMode.IDLE
+        self._sole_error_code: int = 0
+
+    @property
+    def sole_workout_mode(self) -> SoleWorkoutMode:
+        """Current Sole workout mode."""
+        return self._sole_workout_mode
+
+    @property
+    def sole_error_code(self) -> int:
+        """Current Sole error code (0 = no error)."""
+        return self._sole_error_code
+
+    @property
+    def training_status(self) -> str | None:
+        """
+        Map Sole workout mode to FTMS training status string.
+        
+        This allows the existing HA sensor to display the treadmill state.
+        """
+        mode_to_status = {
+            SoleWorkoutMode.IDLE: "idle",
+            SoleWorkoutMode.START: "warming_up",
+            SoleWorkoutMode.RUNNING: "running",
+            SoleWorkoutMode.PAUSE: "paused",
+            SoleWorkoutMode.DONE: "post_workout",
+            SoleWorkoutMode.DEMO: "idle",  # Demo mode shows as idle
+        }
+        return mode_to_status.get(self._sole_workout_mode, "unknown")
 
     @property
     def _has_sole_service(self) -> bool:
@@ -200,6 +251,8 @@ class TreadmillSole(FitnessMachine):
             asyncio.create_task(self._write_sole_command(data, "echo_workout_mode"))
         elif msg_type == 0x06:  # WorkoutData
             self._handle_sole_workout_data(data)
+        elif msg_type == 0x10:  # ErrorCode
+            self._handle_sole_error_code(data)
 
         # Send ACK for message types that require it
         if msg_type in self._ACK_MSG_TYPES:
@@ -231,11 +284,47 @@ class TreadmillSole(FitnessMachine):
         )
 
     def _handle_sole_workout_mode(self, data: bytes) -> None:
-        """Parse Sole WorkoutMode message (0x03)."""
+        """Parse Sole WorkoutMode message (0x03) and update training status."""
         if len(data) >= 4:
-            mode = data[3]
-            mode_names = {0x01: "Idle", 0x02: "Start", 0x04: "Running", 0x06: "Pause", 0x07: "Done"}
-            _LOGGER.debug(f"Sole WorkoutMode: {mode_names.get(mode, f'0x{mode:02x}')}")
+            mode_byte = data[3]
+            old_mode = self._sole_workout_mode
+            
+            # Map byte to enum
+            try:
+                self._sole_workout_mode = SoleWorkoutMode(mode_byte)
+            except ValueError:
+                _LOGGER.debug(f"Unknown Sole workout mode: 0x{mode_byte:02x}")
+                return
+            
+            mode_names = {
+                SoleWorkoutMode.IDLE: "Idle",
+                SoleWorkoutMode.START: "Start",
+                SoleWorkoutMode.RUNNING: "Running",
+                SoleWorkoutMode.PAUSE: "Pause",
+                SoleWorkoutMode.DONE: "Done",
+                SoleWorkoutMode.DEMO: "Demo",
+            }
+            _LOGGER.debug(f"Sole WorkoutMode: {mode_names.get(self._sole_workout_mode, f'0x{mode_byte:02x}')}")
+            
+            # Emit training_status update if mode changed
+            if old_mode != self._sole_workout_mode:
+                _LOGGER.info(f"Sole mode changed: {mode_names.get(old_mode, '?')} -> {mode_names.get(self._sole_workout_mode, '?')}")
+                self._on_event(UpdateEvent("update", {c.TRAINING_STATUS: self.training_status}))
+
+    def _handle_sole_error_code(self, data: bytes) -> None:
+        """Parse Sole ErrorCode message (0x10)."""
+        if len(data) >= 4:
+            error_code = data[3]
+            old_error = self._sole_error_code
+            self._sole_error_code = error_code
+            
+            if error_code != 0:
+                _LOGGER.warning(f"Sole treadmill error code: 0x{error_code:02x}")
+            elif old_error != 0:
+                _LOGGER.info("Sole treadmill error cleared")
+            
+            # Emit error code update (HA can create a sensor for this)
+            self._on_event(UpdateEvent("update", {c.SOLE_ERROR_CODE: error_code}))
 
     def _handle_sole_workout_data(self, data: bytes) -> None:
         """

@@ -39,6 +39,9 @@ TIME_ELAPSED = "time_elapsed"
 TIME_REMAINING = "time_remaining"
 TRAINING_STATUS = "training_status"
 
+# Sole-specific sensor attributes
+SOLE_ERROR_CODE = "sole_error_code"
+
 # TARGET SETTINGS ATTRIBUTES
 
 # WITH RANGES
