@@ -7,19 +7,9 @@
 # - GitHub PR: https://github.com/dudanov/python-pyftms/pull/49
 #   "Support FTMS devices without service_data (data-only fallback + detect type after connect)"
 #   by @mhamzahkhan - addresses devices that advertise FTMS UUID but omit service_data
-#
-# - Sole treadmills (F65, F80, F63, TT8) don't expose FTMS Feature characteristic
-#   but do send Treadmill Data (0x2ACD) notifications
-#
-# - Protocol details from:
-#   - qdomyos-zwift: https://github.com/cagnulein/qdomyos-zwift
-#     src/devices/solef80treadmill/solef80treadmill.cpp
-#   - treadonme: https://github.com/swedishborgie/treadonme
-#     Go library for Sole BLE treadmills
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC
 from functools import cached_property
@@ -110,15 +100,6 @@ class FitnessMachine(ABC, PropertiesManager):
         # Updaters
         self._updater = DataUpdater(self._data_model, self._on_event)
         self._controller = MachineController(self._on_event)
-
-        # Auto-detect FTMS variant by device name
-        self._ftms_variant = c.FTMS_VARIANT_GENERIC
-        device_name = (ble_device.name or "").upper()
-        for prefix in c.SOLE_TREADMILL_NAMES:
-            if device_name.startswith(prefix):
-                self._ftms_variant = c.FTMS_VARIANT_SOLE
-                _LOGGER.info(f"Auto-detected Sole treadmill: {ble_device.name}, using variant '{c.FTMS_VARIANT_SOLE}'")
-                break
 
     @classmethod
     def _get_supported_properties(
@@ -226,14 +207,7 @@ class FitnessMachine(ABC, PropertiesManager):
 
         *May contain both meaningless properties and may not contain
         some properties that are supported by the machine.*
-        
-        For Sole treadmills (and other devices that do not properly report
-        their features), returns all available properties for the machine type.
         """
-        # For Sole variant, features are not properly advertised, so return all available
-        if self.ftms_variant == c.FTMS_VARIANT_SOLE:
-            return self.available_properties
-        
         x = self._get_supported_properties(self._m_features)
         if self.training_status is not None:
             x.append(c.TRAINING_STATUS)
@@ -251,15 +225,8 @@ class FitnessMachine(ABC, PropertiesManager):
         """Supported settings."""
         # PATCH: Handle case where _m_settings was never initialized (data-only mode)
         if not hasattr(self, "_m_settings"):
-            settings = []
-        else:
-            settings = list(ControlModel._get_features(self._m_settings))
-        
-        # Add variant-specific controls only if Sole proprietary service is present
-        if self.ftms_variant == c.FTMS_VARIANT_SOLE and self._has_sole_service:
-            settings.extend([c.SPEED_UP, c.SPEED_DOWN, c.INCLINE_UP, c.INCLINE_DOWN])
-        
-        return tuple(settings)
+            return tuple()
+        return tuple(ControlModel._get_features(self._m_settings))
 
     @property
     def supported_ranges(self) -> MappingProxyType[str, SettingRange]:
@@ -268,16 +235,6 @@ class FitnessMachine(ABC, PropertiesManager):
         if not hasattr(self, "_settings_ranges"):
             return MappingProxyType({})
         return self._settings_ranges
-
-    @property
-    def _has_sole_service(self) -> bool:
-        """Check if Sole proprietary service is available."""
-        try:
-            if not self._cli.is_connected:
-                return False
-            return self._cli.services.get_service(c.SOLE_SERVICE_UUID) is not None
-        except AttributeError:
-            return False
 
     def _on_disconnect(self, cli: BleakClient) -> None:
         _LOGGER.debug("Client disconnected. Reset updaters states.")
@@ -300,17 +257,12 @@ class FitnessMachine(ABC, PropertiesManager):
 
         _LOGGER.debug("Initialization. Trying to establish connection.")
 
-        # Include Sole service UUID if this is a Sole device
-        services_filter = [c.FTMS_UUID, DIS_UUID]
-        if self.ftms_variant == c.FTMS_VARIANT_SOLE:
-            services_filter.append(c.SOLE_SERVICE_UUID)
-
         self._cli = await establish_connection(
             client_class=BleakClient,
             device=self._device,
             name=self.name,
             disconnected_callback=self._on_disconnect,
-            services=services_filter,
+            services=[c.FTMS_UUID, DIS_UUID],
         )
 
         _LOGGER.debug("Connection success.")
@@ -320,7 +272,7 @@ class FitnessMachine(ABC, PropertiesManager):
         if not hasattr(self, "_device_info"):
             self._device_info = await read_device_info(self._cli)
 
-        if not hasattr(self, "_features"):
+        if not hasattr(self, "_m_features"):
             # PATCH: Wrap in try-except for data-only fallback
             # Some devices expose real-time data but omit FTMS Feature characteristic
             try:
@@ -340,157 +292,6 @@ class FitnessMachine(ABC, PropertiesManager):
         await self._controller.subscribe(self._cli)
         await self._updater.subscribe(self._cli, self._data_uuid)
 
-        # Subscribe to Sole proprietary notifications if available
-        if self.ftms_variant == c.FTMS_VARIANT_SOLE:
-            await self._subscribe_sole_notifications()
-
-    # SOLE NOTIFICATION HANDLING
-    
-    # Sole message types that require ACK
-    _SOLE_ACK_MSG_TYPES = {
-        0x06,  # WorkoutData - CRITICAL for sensor updates!
-        0x09,  # HeartRateType - CRITICAL or commands are ignored!
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
-        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
-        0x32, 0x40,
-    }
-
-    async def _subscribe_sole_notifications(self) -> None:
-        """Subscribe to Sole proprietary notifications."""
-        if not self._has_sole_service:
-            _LOGGER.debug("Sole service not found, skipping notification subscription")
-            return
-        
-        try:
-            sole_service = self._cli.services.get_service(c.SOLE_SERVICE_UUID)
-            notify_char = sole_service.get_characteristic(c.SOLE_NOTIFY_UUID)
-            if notify_char:
-                await self._cli.start_notify(notify_char, self._on_sole_notify)
-                _LOGGER.info("Subscribed to Sole notifications")
-                
-                # Send GetDeviceInfo to initiate communication
-                await self._write_sole_command(bytes([0x5b, 0x01, 0xf0, 0x5d]), "get_device_info")
-            else:
-                _LOGGER.warning("Sole notify characteristic not found")
-        except Exception as e:
-            _LOGGER.error(f"Failed to subscribe to Sole notifications: {e}")
-
-    def _on_sole_notify(self, char, data: bytes) -> None:
-        """Handle incoming Sole protocol messages."""
-        if len(data) < 3:
-            return
-        
-        # Validate framing
-        if data[0] != 0x5B or data[-1] != 0x5D:
-            _LOGGER.debug(f"Invalid Sole frame: {data.hex()}")
-            return
-        
-        msg_type = data[2]
-        _LOGGER.debug(f"Sole notify: type=0x{msg_type:02x}, data={data.hex()}")
-        
-        # Handle specific message types
-        if msg_type == 0xF0:  # DeviceInfo response
-            self._handle_sole_device_info(data)
-        elif msg_type == 0x03:  # WorkoutMode
-            self._handle_sole_workout_mode(data)
-            # Echo WorkoutMode messages back (protocol requirement)
-            asyncio.create_task(self._write_sole_command(data, "echo_workout_mode"))
-        elif msg_type == 0x06:  # WorkoutData
-            self._handle_sole_workout_data(data)
-        
-        # Send ACK for message types that require it
-        if msg_type in self._SOLE_ACK_MSG_TYPES:
-            asyncio.create_task(self._send_sole_ack(msg_type))
-
-    def _handle_sole_device_info(self, data: bytes) -> None:
-        """Parse Sole DeviceInfo response (0xF0)."""
-        if len(data) < 10:
-            return
-        
-        # Format: [5B] [len] [F0] [model_id] [version] [units] [max_speed] [min_speed] [max_incline] [user_seg] [5D]
-        model_id = data[3]
-        max_speed_raw = data[6]
-        min_speed_raw = data[7]
-        max_incline_raw = data[8]
-        units = data[5]
-        
-        is_metric = (units & 0x01) == 0x01
-        
-        if is_metric:
-            max_speed = max_speed_raw  # km/h
-            min_speed = min_speed_raw  # km/h
-        else:
-            max_speed = max_speed_raw * 1.60934  # mph -> km/h
-            min_speed = min_speed_raw * 1.60934
-        
-        _LOGGER.info(
-            f"Sole DeviceInfo: Model={model_id}, Speed={min_speed}-{max_speed}km/h, "
-            f"MaxIncline={max_incline_raw}%, Units={'metric' if is_metric else 'imperial'}"
-        )
-
-    def _handle_sole_workout_mode(self, data: bytes) -> None:
-        """Parse Sole WorkoutMode message (0x03)."""
-        if len(data) >= 4:
-            mode = data[3]
-            mode_names = {0x01: "Idle", 0x02: "Start", 0x04: "Running", 0x06: "Pause", 0x07: "Done"}
-            _LOGGER.debug(f"Sole WorkoutMode: {mode_names.get(mode, f'0x{mode:02x}')}")
-
-    def _handle_sole_workout_data(self, data: bytes) -> None:
-        """
-        Parse Sole WorkoutData (0x06) and emit sensor updates.
-        
-        Format (observed from F65):
-        [5B] [len] [06] [elapsed_lo] [elapsed_hi] [dist_lo] [dist_hi]
-        [speed*10] [incline*2] [cal_lo] [cal_hi] [heart_rate] ... [5D]
-        """
-        if len(data) < 12:
-            _LOGGER.debug(f"WorkoutData too short: {len(data)} bytes")
-            return
-        
-        try:
-            # Parse fields (all little-endian)
-            elapsed_time = (data[4] << 8) | data[3]  # seconds
-            distance_raw = ((data[6] << 8) | data[5])  # in 0.01 km units
-            speed = data[7] / 10.0  # km/h (stored as speed * 10)
-            incline = data[8] / 2.0  # % (stored as incline * 2)
-            calories = (data[10] << 8) | data[9]  # kcal
-            heart_rate = data[11] if len(data) > 11 else 0  # bpm
-            
-            distance = distance_raw / 100.0  # Convert to km
-            
-            _LOGGER.debug(
-                f"Sole WorkoutData: speed={speed}km/h, incline={incline}%, "
-                f"elapsed={elapsed_time}s, dist={distance}km, cal={calories}, hr={heart_rate}"
-            )
-            
-            # Emit update event with all sensor data
-            update_data = {
-                c.SPEED_INSTANT: speed,
-                c.INCLINATION: incline,
-                c.TIME_ELAPSED: elapsed_time,
-                c.DISTANCE_TOTAL: int(distance * 1000),  # Convert to meters
-                c.ENERGY_TOTAL: calories,
-            }
-            
-            # Only include heart rate if non-zero
-            if heart_rate > 0:
-                update_data[c.HEART_RATE] = heart_rate
-            
-            # Emit the update event
-            self._on_event(UpdateEvent("update", update_data))
-            
-        except (IndexError, ValueError) as e:
-            _LOGGER.warning(f"Failed to parse Sole WorkoutData: {e}")
-
-    async def _send_sole_ack(self, msg_type: int) -> None:
-        """
-        Send ACK for Sole message type.
-        
-        Format: [5B] [04] [00] [msg_type] [4F='O'] [4B='K'] [5D]
-        """
-        ack = bytes([0x5B, 0x04, 0x00, msg_type, 0x4F, 0x4B, 0x5D])
-        await self._write_sole_command(ack, f"ack_0x{msg_type:02x}")
-
     # COMMANDS
 
     async def _write_command(self, code: ControlCode | None = None, *args, **kwargs):
@@ -504,30 +305,18 @@ class FitnessMachine(ABC, PropertiesManager):
 
     async def reset(self) -> ResultCode:
         """Initiates the procedure to reset the controllable settings of a fitness machine."""
-        # Sole devices use proprietary protocol
-        if self._has_sole_service:
-            return await self.sole_stop()  # Reset via stop for Sole
         return await self._write_command(ControlCode.RESET)
 
     async def start_resume(self) -> ResultCode:
         """Initiate the procedure to start or resume a training session."""
-        # Sole devices use proprietary protocol
-        if self._has_sole_service:
-            return await self.sole_start()
         return await self._write_command(ControlCode.START_RESUME)
 
     async def stop(self) -> ResultCode:
         """Initiate the procedure to stop a training session."""
-        # Sole devices use proprietary protocol
-        if self._has_sole_service:
-            return await self.sole_stop()
         return await self._write_command(stop_pause=StopPauseCode.STOP)
 
     async def pause(self) -> ResultCode:
         """Initiate the procedure to pause a training session."""
-        # Sole devices use proprietary protocol (stop == pause)
-        if self._has_sole_service:
-            return await self.sole_stop()
         return await self._write_command(stop_pause=StopPauseCode.PAUSE)
 
     async def set_setting(self, setting_id: str, *args: Any) -> ResultCode:
@@ -693,105 +482,3 @@ class FitnessMachine(ABC, PropertiesManager):
     async def spin_down_ignore(self) -> ResultCode:
         """Indicates the fitness machine to ignore the current spin down procedure."""
         return await self._write_command(spin_down=SpinDownControlCode.IGNORE)
-
-    # SOLE TREADMILL PROPRIETARY COMMANDS
-    # These methods send commands via the Sole proprietary BLE service
-    # instead of the standard FTMS Control Point.
-    
-    _ftms_variant: str = c.FTMS_VARIANT_GENERIC
-    """FTMS protocol variant for manufacturer-specific handling."""
-    
-    def set_ftms_variant(self, variant: str) -> None:
-        """
-        Set the FTMS protocol variant for manufacturer-specific handling.
-        
-        Supported variants:
-        - "generic": Standard FTMS protocol (default)
-        - "sole": Sole/Spirit treadmills with proprietary incremental controls
-        """
-        self._ftms_variant = variant
-        _LOGGER.debug(f"FTMS variant set to '{variant}'")
-    
-    @property
-    def ftms_variant(self) -> str:
-        """Current FTMS protocol variant."""
-        return getattr(self, '_ftms_variant', c.FTMS_VARIANT_GENERIC)
-    
-    @property
-    def sole_mode(self) -> bool:
-        """Whether Sole proprietary protocol is enabled. (Deprecated: use ftms_variant)"""
-        return self.ftms_variant == c.FTMS_VARIANT_SOLE
-    
-    async def _write_sole_command(self, cmd: bytes, description: str = "") -> ResultCode:
-        """Write a command to the Sole proprietary characteristic."""
-        if not self.is_connected:
-            if self._need_connect:
-                await self._connect()
-            else:
-                return ResultCode.FAILED
-        
-        if not self._has_sole_service:
-            _LOGGER.debug(f"Sole service not available for command: {description}")
-            return ResultCode.NOT_SUPPORTED
-        
-        try:
-            sole_service = self._cli.services.get_service(c.SOLE_SERVICE_UUID)
-            char = sole_service.get_characteristic(c.SOLE_WRITE_UUID)
-            if char is None:
-                _LOGGER.warning("Sole write characteristic not found")
-                return ResultCode.NOT_SUPPORTED
-            
-            _LOGGER.debug(f"Sole >> {description}: {cmd.hex()}")
-            await self._cli.write_gatt_char(char, cmd, response=False)
-            return ResultCode.SUCCESS
-        except Exception as e:
-            _LOGGER.error(f"Sole command failed ({description}): {e}")
-            return ResultCode.FAILED
-    
-    async def sole_start(self) -> ResultCode:
-        """
-        Start/Resume treadmill using Sole proprietary protocol.
-        
-        This handles both scenarios:
-        - From PAUSE: F1 Start command resumes
-        - From IDLE: SetWorkoutMode sequence starts fresh
-        """
-        _LOGGER.info("Starting/Resuming Sole workout...")
-        
-        # First try F1 Start (works for resuming from pause)
-        for _ in range(3):
-            await self._write_sole_command(c.SOLE_CMD_START, "f1_start")
-            await asyncio.sleep(0.1)
-        
-        # Then try SetWorkoutMode = Running (works for starting fresh)
-        # qdomyos sends this 3 times
-        for _ in range(3):
-            await self._write_sole_command(c.SOLE_CMD_SET_MODE_RUNNING, "set_mode_running")
-            await asyncio.sleep(0.1)
-        
-        _LOGGER.info("Sole start/resume commands sent")
-        return ResultCode.SUCCESS
-    
-    async def sole_stop(self) -> ResultCode:
-        """Stop/Pause treadmill using Sole proprietary protocol."""
-        _LOGGER.info("Stopping Sole workout...")
-        # Send F1 Stop (pause)
-        for _ in range(3):
-            await self._write_sole_command(c.SOLE_CMD_STOP, "f1_stop")
-        return ResultCode.SUCCESS
-    
-    async def speed_up(self) -> ResultCode:
-        """Increment speed by one step (Sole proprietary)."""
-        return await self._write_sole_command(c.SOLE_CMD_SPEED_UP, "speed_up")
-    
-    async def speed_down(self) -> ResultCode:
-        """Decrement speed by one step (Sole proprietary)."""
-        return await self._write_sole_command(c.SOLE_CMD_SPEED_DOWN, "speed_down")
-    
-    async def incline_up(self) -> ResultCode:
-        """Increment incline by one step (Sole proprietary)."""
-        return await self._write_sole_command(c.SOLE_CMD_INCLINE_UP, "incline_up")
-    
-    async def incline_down(self) -> ResultCode:
-        """Decrement incline by one step (Sole proprietary)."""
-        return await self._write_sole_command(c.SOLE_CMD_INCLINE_DOWN, "incline_down")

@@ -71,7 +71,8 @@ def get_client(
         adv_data = adv_or_type
         adv_or_type = get_machine_type_from_service_data(adv_or_type, default_type)
 
-    cls = get_machine(adv_or_type)
+    # Pass ble_device to get_machine so it can detect device-specific subclasses
+    cls = get_machine(adv_or_type, ble_device)
 
     return cls(
         ble_device,
@@ -191,4 +192,8 @@ __all__ = [
     "SettingRange",
     "PropertiesManager",
     "DisconnectCallback",
+    "is_sole_treadmill",
 ]
+
+# Re-export is_sole_treadmill for convenience
+from .machines.treadmill_sole import is_sole_treadmill
