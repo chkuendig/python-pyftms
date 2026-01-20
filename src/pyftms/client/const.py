@@ -183,3 +183,56 @@ STATUS_UUID = "2ada"
 `Device Type`: Treadmill, walking pad, elliptical machine, rower, and smart bike.
 `Description`: Reports workout status changes of the fitness machine.
 """
+
+# Sole Treadmill Proprietary Protocol
+# References:
+# - qdomyos-zwift: https://github.com/cagnulein/qdomyos-zwift
+#   src/devices/solef80treadmill/solef80treadmill.cpp
+# - treadonme: https://github.com/swedishborgie/treadonme
+
+SOLE_SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"
+"""Sole Proprietary Service UUID"""
+
+SOLE_WRITE_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"
+"""Sole Write Characteristic UUID"""
+
+SOLE_NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"
+"""Sole Notify Characteristic UUID"""
+
+# Sole control commands (framed with 0x5b start, 0x5d end)
+# F1 commands for direct control
+SOLE_CMD_SPEED_UP = bytes([0x5b, 0x02, 0xf1, 0x02, 0x5d])
+SOLE_CMD_SPEED_DOWN = bytes([0x5b, 0x02, 0xf1, 0x03, 0x5d])
+SOLE_CMD_INCLINE_UP = bytes([0x5b, 0x02, 0xf1, 0x04, 0x5d])
+SOLE_CMD_INCLINE_DOWN = bytes([0x5b, 0x02, 0xf1, 0x05, 0x5d])
+SOLE_CMD_START = bytes([0x5b, 0x02, 0xf1, 0x01, 0x5d])  # F1 Start
+SOLE_CMD_STOP = bytes([0x5b, 0x02, 0xf1, 0x06, 0x5d])   # F1 Stop
+# SetWorkoutMode commands - qdomyos uses 0x03 as message type with mode in payload
+SOLE_CMD_SET_MODE_RUNNING = bytes([0x5b, 0x02, 0x03, 0x04, 0x5d])  # WorkoutMode = Running (0x04)
+SOLE_CMD_SET_MODE_PAUSE = bytes([0x5b, 0x02, 0x03, 0x06, 0x5d])    # WorkoutMode = Pause (0x06)
+SOLE_CMD_SET_MODE_DONE = bytes([0x5b, 0x02, 0x03, 0x07, 0x5d])     # WorkoutMode = Done (0x07)
+SOLE_CMD_SET_MODE_IDLE = bytes([0x5b, 0x02, 0x03, 0x01, 0x5d])     # WorkoutMode = Idle (0x01)
+
+# Sole startup sequence messages (for initializing on connection)
+SOLE_CMD_GET_INFO = bytes([0x5b, 0x01, 0xf0, 0x5d])  # GetDeviceInfo
+SOLE_CMD_ACK_0x10 = bytes([0x5b, 0x04, 0x00, 0x10, 0x4f, 0x4b, 0x5d])  # ACK for 0x10
+SOLE_CMD_ACK_0x09 = bytes([0x5b, 0x04, 0x00, 0x09, 0x4f, 0x4b, 0x5d])  # ACK for HeartRateType
+SOLE_CMD_USER_PROFILE = bytes([0x5b, 0x06, 0x07, 0x01, 0x23, 0x00, 0x9b, 0xaa, 0x5d])  # UserProfile from qdomyos F65
+SOLE_CMD_PROGRAM_MANUAL = bytes([0x5b, 0x03, 0x08, 0x10, 0x01, 0x5d])  # Manual program
+SOLE_CMD_WORKOUT_TARGET = bytes([0x5b, 0x05, 0x04, 0x00, 0x00, 0x00, 0x00, 0x5d])  # No target
+SOLE_CMD_MAX_INCLINE = bytes([0x5b, 0x02, 0x22, 0x09, 0x5d])  # Max incline = 9
+SOLE_CMD_SET_MODE_START = bytes([0x5b, 0x02, 0x02, 0x02, 0x5d])  # SetWorkoutMode(0x02) = Start(0x02)
+
+# Button key constants for Sole incremental controls
+SPEED_UP = "speed_up"
+SPEED_DOWN = "speed_down"
+INCLINE_UP = "incline_up"
+INCLINE_DOWN = "incline_down"
+
+# FTMS Variant identifiers (for manufacturer-specific protocols)
+FTMS_VARIANT_GENERIC = "generic"   # Standard FTMS protocol
+FTMS_VARIANT_SOLE = "sole"         # Sole/Spirit treadmills (proprietary incremental controls)
+# Future variants: "horizon", "nordictrack", etc.
+
+# Known Sole treadmill name prefixes
+SOLE_TREADMILL_NAMES = ("F63", "F65", "F80", "F85", "F89", "S77", "TT8", "ST90", "TRX7.5")
