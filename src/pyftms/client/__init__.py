@@ -45,7 +45,6 @@ def get_client(
     timeout: float = 2,
     on_ftms_event: FtmsCallback | None = None,
     on_disconnect: DisconnectCallback | None = None,
-    default_type: MachineType | None = None,
     **kwargs: Any,
 ) -> FitnessMachine:
     """
@@ -58,7 +57,6 @@ def get_client(
     - `timeout` - Control operation timeout. Defaults to 2.0s.
     - `on_ftms_event` - Callback for receiving fitness machine events.
     - `on_disconnect` - Disconnection callback.
-    - `default_type` - Optional default machine type for devices advertising FTMS UUID without service_data (e.g., Sole treadmills).
     - `**kwargs` - Additional keyword arguments for backwards compatibility.
 
     Return:
@@ -69,7 +67,7 @@ def get_client(
 
     if isinstance(adv_or_type, AdvertisementData):
         adv_data = adv_or_type
-        adv_or_type = get_machine_type_from_service_data(adv_or_type, default_type)
+        adv_or_type = get_machine_type_from_service_data(adv_or_type)
 
     cls = get_machine(adv_or_type)
 

@@ -48,30 +48,26 @@ class MachineType(Flag):
     """Indoor Bike Machine."""
 
 
-# Known Sole treadmill name prefixes that don't advertise proper service data
-SOLE_TREADMILL_NAMES = ("F65", "F63", "F80", "F85", "TT8", "ST90")
+# Known Sole treadmill model identifiers (may appear anywhere in device name)
+SOLE_TREADMILL_MODELS = ("F65", "F63", "F80", "F85", "TT8", "ST90")
 
 
 def _is_sole_treadmill(device_name: str | None) -> bool:
-    """Check if device is a known Sole treadmill by name prefix."""
+    """Check if device is a known Sole treadmill by model in name."""
     if not device_name:
         return False
     name_upper = device_name.upper()
-    return any(name_upper.startswith(prefix) for prefix in SOLE_TREADMILL_NAMES)
+    # Device name may be "F65", "MCHP F65 (00)", etc.
+    return any(model in name_upper for model in SOLE_TREADMILL_MODELS)
 
 
 def get_machine_type_from_service_data(
     adv_data: AdvertisementData,
-    default_type: MachineType | None = None,
 ) -> MachineType:
     """Returns fitness machine type from Bluetooth advertisement data.
 
     Parameters:
         adv_data: Bluetooth [advertisement data](https://bleak.readthedocs.io/en/latest/backends/index.html#bleak.backends.scanner.AdvertisementData).
-        default_type: Optional default machine type to return if service_data
-            is missing but FTMS UUID is present in advertised service UUIDs.
-            This handles devices (like Sole treadmills) that advertise the
-            FTMS service UUID but don't include service_data.
 
     Returns:
         Fitness machine type.
@@ -80,15 +76,12 @@ def get_machine_type_from_service_data(
     data = adv_data.service_data.get(normalize_uuid_str(FTMS_UUID))
 
     if data is None or not (2 <= len(data) <= 3):
-        # Auto-detect Sole treadmills by name if no default_type provided
-        if default_type is None and _is_sole_treadmill(adv_data.local_name):
-            default_type = MachineType.TREADMILL
-        
-        # If no service_data but FTMS UUID is in service_uuids and we have a default
-        if default_type is not None:
+        # Auto-detect Sole treadmills by name - they advertise FTMS UUID
+        # but don't include proper service_data
+        if _is_sole_treadmill(adv_data.local_name):
             ftms_normalized = normalize_uuid_str(FTMS_UUID)
             if any(normalize_uuid_str(uuid) == ftms_normalized for uuid in adv_data.service_uuids):
-                return default_type
+                return MachineType.TREADMILL
         raise NotFitnessMachineError(data)
 
     # Reading mandatory `Flags` and `Machine Type`.

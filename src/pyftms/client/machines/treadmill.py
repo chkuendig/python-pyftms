@@ -82,13 +82,13 @@ class Treadmill(FitnessMachine):
             try:
                 control_char = self._cli.services.get_characteristic(c.CONTROL_POINT_UUID)
                 if control_char:
-                    _LOGGER.debug("Sole F65: Sending FTMS initialization (0xe9)")
+                    _LOGGER.warning("Sole F65: Sending FTMS initialization (0xe9)")
                     await self._cli.write_gatt_char(
                         control_char,
                         self._SOLE_FTMS_START_CMD,
                         response=False
                     )
-                    _LOGGER.info("Sole F65: FTMS passive monitoring initialized")
+                    _LOGGER.warning("Sole F65: FTMS passive monitoring initialized")
                 else:
                     _LOGGER.warning("Sole F65: FTMS Control Point not found")
             except Exception as e:
