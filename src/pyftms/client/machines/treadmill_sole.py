@@ -20,10 +20,8 @@
 from __future__ import annotations
 
 import logging
-from functools import cached_property
 from typing import ClassVar
 
-from .. import const as c
 from ..const import CONTROL_POINT_UUID
 from .treadmill import Treadmill
 
@@ -57,13 +55,8 @@ class TreadmillSole(Treadmill):
     1. Keep the implementation minimal for upstream acceptance
     2. Avoid locking the treadmill's physical console controls
 
-    Supported features (via FTMS Treadmill Data):
-    - Speed (instant)
-    - Inclination
-    - Distance (total)
-    - Elapsed time
-    - Expended energy (calories)
-    - Heart rate (when sensor connected)
+    Capabilities are auto-detected from the FTMS Feature characteristic,
+    same as standard FTMS treadmills.
     """
 
     # Sole-specific FTMS initialization command (non-standard opcode)
@@ -73,16 +66,6 @@ class TreadmillSole(Treadmill):
     def protocol_variant(self) -> str:
         """Return 'sole' to identify this as a Sole treadmill."""
         return "sole"
-
-    @cached_property
-    def available_properties(self) -> tuple[str, ...]:
-        """
-        Sole treadmills only reliably report speed and heart rate via FTMS.
-
-        Other fields (distance, incline, calories, time) are either not sent
-        or not reliable. Limit to what actually works.
-        """
-        return (c.SPEED_INSTANT, c.HEART_RATE)
 
     @property
     def supported_settings(self) -> tuple[str, ...]:
