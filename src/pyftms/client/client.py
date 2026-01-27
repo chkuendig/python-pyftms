@@ -148,6 +148,16 @@ class FitnessMachine(ABC, PropertiesManager):
 
         return self._device.name or self._device.address
 
+    @property
+    def protocol_variant(self) -> str | None:
+        """
+        Protocol variant/manufacturer identifier.
+        
+        Returns None for standard FTMS devices, or a string identifier
+        for manufacturer-specific implementations (e.g., "sole" for Sole treadmills).
+        """
+        return None
+
     def set_disconnect_callback(self, cb: DisconnectCallback):
         """Set disconnect callback."""
         self._disconnect_cb = cb

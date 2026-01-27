@@ -97,6 +97,7 @@ class DataUpdater:
         self._result |= data_
 
         # If `More Data` bit is set - we must wait for other messages.
+        # This is normal for devices that split data across multiple packets.
         if data[0] & 1:
             _LOGGER.debug("'More Data' bit is set. Waiting for next data.")
             return

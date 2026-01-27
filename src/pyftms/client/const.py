@@ -39,9 +39,6 @@ TIME_ELAPSED = "time_elapsed"
 TIME_REMAINING = "time_remaining"
 TRAINING_STATUS = "training_status"
 
-# Sole-specific sensor attributes
-SOLE_ERROR_CODE = "sole_error_code"
-
 # TARGET SETTINGS ATTRIBUTES
 
 # WITH RANGES
@@ -187,8 +184,3 @@ STATUS_UUID = "2ada"
 `Description`: Reports workout status changes of the fitness machine.
 """
 
-# Button key constants for incremental controls (used by device-specific subclasses)
-SPEED_UP = "speed_up"
-SPEED_DOWN = "speed_down"
-INCLINE_UP = "incline_up"
-INCLINE_DOWN = "incline_down"

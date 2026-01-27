@@ -51,15 +51,16 @@ class RealtimeData(BaseModel):
 
         for field, serializer in cls._iter_fields_serializers():
             if mask & 1:
-                # PATCH: Catch EOFError for truncated data streams
+                # PATCH: Catch EOFError for truncated data streams.
+                # NOTE: We silently handle truncation here because FTMS supports split
+                # packets via the "More Data" bit (bit 0 of flags). When More Data is set,
+                # the flags indicate what fields will be present across ALL packets,
+                # not just this one. This is normal FTMS behavior, not a device compliance
+                # issue, so no warning is logged.
                 try:
                     kwargs[field.name] = serializer.deserialize(src)
                 except EOFError:
-                    _LOGGER.debug(
-                        "Truncated data stream: missing field '%s'. "
-                        "Device may not be fully FTMS compliant.",
-                        field.name
-                    )
+                    # Data was truncated - more data may arrive in next packet
                     break
 
             mask >>= 1
