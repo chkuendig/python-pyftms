@@ -20,8 +20,10 @@
 from __future__ import annotations
 
 import logging
+from functools import cached_property
 from typing import ClassVar
 
+from .. import const as c
 from ..const import CONTROL_POINT_UUID
 from .treadmill import Treadmill
 
@@ -66,6 +68,31 @@ class TreadmillSole(Treadmill):
     def protocol_variant(self) -> str:
         """Return 'sole' to identify this as a Sole treadmill."""
         return "sole"
+
+    @cached_property
+    def available_properties(self) -> tuple[str, ...]:
+        """
+        Sole treadmills report many FTMS features but only send a subset.
+
+        Based on FTMS Treadmill Data packet analysis, Sole F65 actually sends:
+        - Speed (instant)
+        - Inclination
+        - Distance (total)
+        - Time elapsed
+        - Energy total (calories)
+        - Heart rate
+
+        The device reports supporting many more features (pace, elevation gain,
+        force on belt, etc.) but doesn't actually send that data.
+        """
+        return (
+            c.SPEED_INSTANT,
+            c.INCLINATION,
+            c.DISTANCE_TOTAL,
+            c.TIME_ELAPSED,
+            c.ENERGY_TOTAL,
+            c.HEART_RATE,
+        )
 
     @property
     def supported_settings(self) -> tuple[str, ...]:
