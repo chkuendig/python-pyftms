@@ -148,16 +148,6 @@ class FitnessMachine(ABC, PropertiesManager):
 
         return self._device.name or self._device.address
 
-    @property
-    def protocol_variant(self) -> str | None:
-        """
-        Protocol variant/manufacturer identifier.
-        
-        Returns None for standard FTMS devices, or a string identifier
-        for manufacturer-specific implementations (e.g., "sole" for Sole treadmills).
-        """
-        return None
-
     def set_disconnect_callback(self, cb: DisconnectCallback):
         """Set disconnect callback."""
         self._disconnect_cb = cb
@@ -419,76 +409,41 @@ class FitnessMachine(ABC, PropertiesManager):
         """
         return await self.set_setting(c.TARGET_DISTANCE, value)
 
-    async def set_target_time(self, value: int) -> ResultCode:
+    async def set_target_time(self, *value: int) -> ResultCode:
         """
-        Sets targeted training time.
+        Set targeted training time.
 
-        Units: `second`.
+        Units: `s`.
         """
-        return await self.set_setting(c.TARGET_TIME, value)
+        return await self.set_setting(c.TARGET_TIME, *value)
 
-    async def set_target_time_two_zones(self, fat_burn: int, fitness: int) -> ResultCode:
-        """
-        Sets targeted time in two Heart Rate Zones.
-
-        Units: `second`.
-        """
-        return await self.set_setting(c.TARGET_TIME_TWO_HR_ZONES, fat_burn, fitness)
-
-    async def set_target_time_three_zones(
-        self, light: int, moderate: int, hard: int
+    async def set_indoor_bike_simulation(
+        self,
+        value: IndoorBikeSimulationParameters,
     ) -> ResultCode:
-        """
-        Sets targeted time in three Heart Rate Zones.
-
-        Units: `second`.
-        """
-        return await self.set_setting(c.TARGET_TIME_THREE_HR_ZONES, light, moderate, hard)
-
-    async def set_target_time_five_zones(
-        self, very_light: int, light: int, moderate: int, hard: int, maximum: int
-    ) -> ResultCode:
-        """
-        Sets targeted time in five Heart Rate Zones.
-
-        Units: `second`.
-        """
-        return await self.set_setting(
-            c.TARGET_TIME_FIVE_HR_ZONES, very_light, light, moderate, hard, maximum
-        )
+        """Set indoor bike simulation parameters."""
+        return await self.set_setting(c.INDOOR_BIKE_SIMULATION, value)
 
     async def set_wheel_circumference(self, value: float) -> ResultCode:
         """
-        Sets wheel circumference.
+        Set wheel circumference.
 
         Units: `mm`.
         """
         return await self.set_setting(c.WHEEL_CIRCUMFERENCE, value)
 
-    async def set_indoor_bike_simulation(
-        self,
-        wind: float = 0.0,
-        grade: float = 0.0,
-        crr: float = 0.0,
-        cw: float = 0.0,
-    ) -> ResultCode:
-        """
-        Sets simulation parameters for `Indoor Bike`.
-
-        * `wind` - current wind speed, units: `m/s`.
-        * `grade` - current road grade, units: `%`.
-        * `crr` - coefficient of rolling resistance.
-        * `cw` - wind resistance coefficient, units: `kg/m`.
-        """
-        return await self.set_setting(
-            c.INDOOR_BIKE_SIMULATION,
-            IndoorBikeSimulationParameters(wind, grade, crr, cw),
-        )
-
     async def spin_down_start(self) -> ResultCode:
-        """Initiate the spin down procedure."""
-        return await self._write_command(spin_down=SpinDownControlCode.START)
+        """
+        Start Spin-Down.
+
+        It can be sent either in response to a request to start Spin-Down, or separately.
+        """
+        return await self.set_setting(c.SPIN_DOWN, SpinDownControlCode.START)
 
     async def spin_down_ignore(self) -> ResultCode:
-        """Indicates the fitness machine to ignore the current spin down procedure."""
-        return await self._write_command(spin_down=SpinDownControlCode.IGNORE)
+        """
+        Ignore Spin-Down.
+
+        It can be sent in response to a request to start Spin-Down.
+        """
+        return await self.set_setting(c.SPIN_DOWN, SpinDownControlCode.IGNORE)
