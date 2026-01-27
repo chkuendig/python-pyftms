@@ -20,10 +20,11 @@
 from __future__ import annotations
 
 import logging
+from functools import cached_property
 from typing import ClassVar
 
+from .. import const as c
 from ..const import CONTROL_POINT_UUID
-from ..properties import MachineType
 from .treadmill import Treadmill
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,6 +73,16 @@ class TreadmillSole(Treadmill):
     def protocol_variant(self) -> str:
         """Return 'sole' to identify this as a Sole treadmill."""
         return "sole"
+
+    @cached_property
+    def available_properties(self) -> tuple[str, ...]:
+        """
+        Sole treadmills only reliably report speed and heart rate via FTMS.
+
+        Other fields (distance, incline, calories, time) are either not sent
+        or not reliable. Limit to what actually works.
+        """
+        return (c.SPEED_INSTANT, c.HEART_RATE)
 
     @property
     def supported_settings(self) -> tuple[str, ...]:
