@@ -37,6 +37,8 @@ from .properties import (
 )
 from .properties.device_info import DIS_UUID
 
+from .dyaco import DyacoUartUpdater, UART_SERVICE_UUID, DYACO_DEVICE_PREFIXES
+
 _LOGGER = logging.getLogger(__name__)
 
 type DisconnectCallback = Callable[[FitnessMachine], None]
@@ -94,6 +96,9 @@ class FitnessMachine(ABC, PropertiesManager):
         # Updaters
         self._updater = DataUpdater(self._data_model, self._on_event)
         self._controller = MachineController(self._on_event)
+
+        # Dyaco UART updater for extended data on SOLE/Spirit/XTERRA/Fuel equipment
+        self._uart_updater = DyacoUartUpdater(self._on_event)
 
     @classmethod
     def _get_supported_properties(
@@ -245,6 +250,7 @@ class FitnessMachine(ABC, PropertiesManager):
         del self._cli
         self._updater.reset()
         self._controller.reset()
+        self._uart_updater.reset()
 
         if self._disconnect_cb:
             self._disconnect_cb(self)
@@ -257,13 +263,15 @@ class FitnessMachine(ABC, PropertiesManager):
 
         _LOGGER.debug("Initialization. Trying to establish connection.")
 
+        # Build service list: FTMS + DIS + Dyaco UART (for SOLE/Spirit/XTERRA/Fuel)
+        services_to_discover = [c.FTMS_UUID, DIS_UUID, UART_SERVICE_UUID]
+
         self._cli = await establish_connection(
             client_class=BleakClient,
             device=self._device,
             name=self.name,
             disconnected_callback=self._on_disconnect,
-            # we needed only two services: `Fitness Machine Service` and `Device Information Service`
-            services=[c.FTMS_UUID, DIS_UUID],
+            services=services_to_discover,
             kwargs=self._kwargs,
         )
 
@@ -291,6 +299,35 @@ class FitnessMachine(ABC, PropertiesManager):
 
         await self._controller.subscribe(self._cli)
         await self._updater.subscribe(self._cli, self._data_uuid)
+
+        # Dyaco UART detection for extended data (SOLE/Spirit/XTERRA/Fuel)
+        # Detection follows the same two-step approach as the official SOLE Fitness app:
+        #
+        # Step 1: Device name prefix matching (done during BLE scan by the app)
+        # The app matches BLE device names against known prefixes like F65, SOLE, Spirit, etc.
+        device_name = self._device.name or ""
+        is_dyaco_name = any(device_name.startswith(prefix) for prefix in DYACO_DEVICE_PREFIXES)
+
+        # Step 2: UART service UUID check (done after connection by the app)
+        # The ISSC Transparent UART service (UUID prefix "49535343" = ASCII "ISSC") is
+        # vendor-specific to ISSC Technologies (now Microchip) BLE chips. All Dyaco brands
+        # (SOLE, Spirit, XTERRA, Fuel) use these chips, so this UUID identifies Dyaco equipment.
+        has_uart_service = any(
+            str(svc.uuid).lower() == UART_SERVICE_UUID.lower()
+            for svc in self._cli.services
+        )
+
+        if is_dyaco_name and has_uart_service:
+            _LOGGER.debug("Dyaco device detected: name='%s' matches prefix, UART service present", device_name)
+            try:
+                await self._uart_updater.subscribe(self._cli)
+                _LOGGER.info("Dyaco UART monitoring enabled (passive mode)")
+            except Exception as e:
+                _LOGGER.warning("Dyaco UART subscription failed: %s", e)
+        elif has_uart_service:
+            _LOGGER.debug("UART service found but device name '%s' doesn't match Dyaco prefixes", device_name)
+        elif is_dyaco_name:
+            _LOGGER.debug("Device name '%s' matches Dyaco prefix but UART service not found", device_name)
 
     # COMMANDS
 
