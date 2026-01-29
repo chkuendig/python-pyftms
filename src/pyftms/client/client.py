@@ -322,6 +322,39 @@ class FitnessMachine(ABC, PropertiesManager):
             try:
                 await self._uart_updater.subscribe(self._cli)
                 _LOGGER.info("Dyaco UART monitoring enabled (passive mode)")
+
+                # Pre-populate UART-available properties so they appear in live_properties
+                # even before workout data arrives. This enables proper sensor discovery.
+                #
+                # Based on reverse-engineering of SOLE Fitness app (ideabussdk_sole SDK):
+                # - SoleProtocol.java lines 2176-2214: Treadmill workout data format
+                # - SoleProtocol.java lines 2125-2174: Bike/Elliptical workout data format
+                # See PROTOCOL_ANALYSIS.md for full documentation.
+                #
+                # Common properties available on all Dyaco equipment via UART:
+                uart_properties = [
+                    c.TIME_ELAPSED,
+                    c.SPEED_INSTANT,
+                    c.DISTANCE_TOTAL,
+                    c.ENERGY_TOTAL,
+                    c.HEART_RATE,
+                ]
+                # Machine-type specific properties from workout data (CMD 0x06):
+                if self._machine_type == MachineType.TREADMILL:
+                    # Treadmills report: speed, incline (%)
+                    uart_properties.append(c.INCLINATION)
+                else:
+                    # Bikes and ellipticals report: rpm (cadence), watt (power)
+                    # Note: resistance_level is NOT in workout data for most models;
+                    # it's only a control setting, not continuously reported.
+                    uart_properties.extend([
+                        c.CADENCE_INSTANT,
+                        c.POWER_INSTANT,
+                    ])
+
+                self._live_properties.update(uart_properties)
+                _LOGGER.debug("Added UART properties to live_properties: %s", uart_properties)
+
             except Exception as e:
                 _LOGGER.warning("Dyaco UART subscription failed: %s", e)
         elif has_uart_service:

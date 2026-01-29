@@ -252,15 +252,21 @@ class DyacoUartUpdater:
         if data.heart_rate > 0:
             update["heart_rate"] = data.heart_rate
 
-        # Device-specific fields
+        # Device-specific fields based on workout data format from SoleProtocol.java:
+        # - Treadmills (deviceType=0): speed, incline
+        # - Bikes/Ellipticals (deviceType=1,2): rpm (cadence), speed, watt (power)
         if device_type == DeviceType.TREADMILL:
-            # Inclination (%)
+            # Inclination (%) - parsed from offset 20-22 in treadmill workout data
             if data.incline >= 0:
                 update["inclination"] = float(data.incline)
         else:
             # Bikes and ellipticals
             if data.rpm > 0:
                 update["cadence_instant"] = float(data.rpm)
+            # Note: resistance_level is NOT in workout data for most models.
+            # Only models 31 (SC200), 30 (SC200), 10 (XS895) have nowLevel in workout data.
+            # The level field is currently not parsed from the protocol, so this will
+            # only trigger if we add model-specific parsing in the future.
             if data.level > 0:
                 update["resistance_level"] = data.level
             if data.watt > 0:
