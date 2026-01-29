@@ -183,7 +183,7 @@ class BaseModel:
             for field in dc.fields(cls):
                 meta, tp = cast(ModelMeta, field.metadata), field.type
 
-                if not meta or field.name == "code":
+                if field.name == "code":
                     continue
 
                 if get_origin(tp) in (Optional, Union, UnionType):
